@@ -19,4 +19,7 @@ class Transaction(Base):
     sender_id = Column(Integer, ForeignKey("users.id"))
     receiver_id = Column(Integer, ForeignKey("users.id"))
     amount = Column(Float)
-    timestamp = Column(String, default=str(datetime.utcnow()))
+    timestamp = Column(
+    String,
+    default=lambda: datetime.utcnow().isoformat()
+)
