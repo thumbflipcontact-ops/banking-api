@@ -1,4 +1,4 @@
-
+import logging
 from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
@@ -11,13 +11,20 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import os
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
+
+logger = logging.getLogger(__name__)
+
 app = FastAPI()
 @app.exception_handler(Exception)
 async def global_exception_handler(
     request: Request,
     exc: Exception
 ):
-    print(f"Unexpected error: {exc}")
+    logger.exception("Unexpected error occurred")
 
     return JSONResponse(
         status_code=500,
