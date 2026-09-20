@@ -1,5 +1,6 @@
 
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Request
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from database import SessionLocal
@@ -11,6 +12,19 @@ from dotenv import load_dotenv
 import os
 
 app = FastAPI()
+@app.exception_handler(Exception)
+async def global_exception_handler(
+    request: Request,
+    exc: Exception
+):
+    print(f"Unexpected error: {exc}")
+
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": "An internal server error occurred"
+        }
+    )
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
