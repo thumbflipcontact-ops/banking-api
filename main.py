@@ -1,5 +1,5 @@
 import logging
-from fastapi import FastAPI, HTTPException, Depends, Request
+from fastapi import FastAPI, HTTPException, Depends, Request, Query
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
@@ -190,16 +190,10 @@ def check_balance(
 
 @app.post("/deposit")
 def deposit(
-    amount: float,
+    amount: float = Query(..., gt=0),
     current_user: str = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    if amount <= 0:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid amount"
-        )
-
     user = db.query(User).filter(
         User.username == current_user
     ).first()
@@ -220,7 +214,6 @@ def deposit(
     )
 
     return {"balance": user.balance}
-
 # ---------------- TRANSFER ----------------
 
 @app.post("/transfer")
