@@ -213,8 +213,13 @@ def deposit(
     user.balance += amount
     db.commit()
 
-    return {"balance": user.balance}
+    logger.info(
+        "Deposit completed: user_id=%s amount=%s",
+        user.id,
+        amount
+    )
 
+    return {"balance": user.balance}
 
 # ---------------- TRANSFER ----------------
 
