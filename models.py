@@ -2,7 +2,6 @@ from sqlalchemy import Column, Integer, String, Float, ForeignKey
 from database import Base
 from datetime import datetime
 
-
 class User(Base):
     __tablename__ = "users"
 
@@ -19,7 +18,8 @@ class Transaction(Base):
     sender_id = Column(Integer, ForeignKey("users.id"))
     receiver_id = Column(Integer, ForeignKey("users.id"))
     amount = Column(Float)
+
     timestamp = Column(
-    String,
-    default=lambda: datetime.utcnow().isoformat()
-)
+        String,
+        default=lambda: datetime.utcnow().isoformat()
+    )

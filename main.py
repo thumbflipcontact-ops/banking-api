@@ -1,6 +1,4 @@
-import logging
-from fastapi import FastAPI, HTTPException, Depends, Request, Query
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, Depends
 from sqlalchemy.orm import Session
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from database import SessionLocal
@@ -8,34 +6,36 @@ from models import User, Transaction
 from passlib.context import CryptContext
 from jose import jwt, JWTError
 from datetime import datetime, timedelta
+from pydantic import BaseModel
 from dotenv import load_dotenv
 import os
+from pydantic import ConfigDict
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
-)
+class BalanceResponse(BaseModel):
+    username: str
+    balance: float
 
-logger = logging.getLogger(__name__)
+class DepositResponse(BaseModel):
+    balance: float
 
+class TransferResponse(BaseModel):
+    message: str
+
+class TransactionResponse(BaseModel):
+    id: int
+    sender_id: int
+    receiver_id: int
+    amount: float
+    timestamp: str
+
+    model_config = ConfigDict(from_attributes=True)
+    
 app = FastAPI()
-@app.exception_handler(Exception)
-async def global_exception_handler(
-    request: Request,
-    exc: Exception
-):
-    logger.exception("Unexpected error occurred")
-
-    return JSONResponse(
-        status_code=500,
-        content={
-            "detail": "An internal server error occurred"
-        }
-    )
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-# JWT CONFIG
+# 🔐 JWT CONFIG
+
 load_dotenv()
 
 SECRET_KEY = os.getenv("SECRET_KEY")
@@ -52,14 +52,13 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
 def get_db():
     db = SessionLocal()
-
     try:
         yield db
     finally:
         db.close()
 
 
-# ---------------- SECURITY ----------------
+# ---------------- PASSWORD FUNCTIONS ----------------
 
 def hash_password(password: str):
     return pwd_context.hash(password)
@@ -69,9 +68,13 @@ def verify_password(plain, hashed):
     return pwd_context.verify(plain, hashed)
 
 
+# ---------------- JWT FUNCTIONS ----------------
+
 def create_token(data: dict):
     to_encode = data.copy()
+
     expire = datetime.utcnow() + timedelta(minutes=30)
+
     to_encode.update({"exp": expire})
 
     return jwt.encode(
@@ -107,7 +110,6 @@ def get_current_user(
             detail="Invalid token"
         )
 
-
 # ---------------- AUTH ----------------
 
 @app.post("/register")
@@ -136,7 +138,6 @@ def register(
 
     return {"message": "User registered"}
 
-
 @app.post("/login")
 def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
@@ -164,10 +165,9 @@ def login(
         "token_type": "bearer"
     }
 
-
 # ---------------- BALANCE ----------------
 
-@app.get("/balance")
+@app.get("/balance", response_model=BalanceResponse)
 def check_balance(
     current_user: str = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -183,17 +183,22 @@ def check_balance(
         )
 
     return {
-        "username": current_user,
+        "username": user.username,
         "balance": user.balance
     }
 
-
-@app.post("/deposit")
+@app.post("/deposit", response_model=DepositResponse)
 def deposit(
-    amount: float = Query(..., gt=0),
+    amount: float,
     current_user: str = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    if amount <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid amount"
+        )
+
     user = db.query(User).filter(
         User.username == current_user
     ).first()
@@ -207,59 +212,32 @@ def deposit(
     user.balance += amount
     db.commit()
 
-    logger.info(
-        "Deposit completed: user_id=%s amount=%s",
-        user.id,
-        amount
-    )
-
     return {"balance": user.balance}
+
 # ---------------- TRANSFER ----------------
 
-@app.post("/transfer")
+@app.post("/transfer", response_model=TransferResponse)
 def transfer(
     receiver: str,
     amount: float,
     current_user: str = Depends(get_current_user),
     db: Session = Depends(get_db)
-):
-    sender_user = db.query(User).filter(
-        User.username == current_user
-    ).first()
+):    
 
-    receiver_user = db.query(User).filter(
-        User.username == receiver
-    ).first()
-
-    if not sender_user:
-        raise HTTPException(
-            status_code=404,
-            detail="Sender not found"
-        )
+    sender_user = db.query(User).filter(User.username == current_user).first()
+    receiver_user = db.query(User).filter(User.username == receiver).first()
 
     if not receiver_user:
-        raise HTTPException(
-            status_code=404,
-            detail="Receiver not found"
-        )
+        raise HTTPException(status_code=404, detail="Receiver not found")
 
     if current_user == receiver:
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot send to yourself"
-        )
+        raise HTTPException(status_code=400, detail="Cannot send to yourself")
 
     if amount <= 0:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid amount"
-        )
+        raise HTTPException(status_code=400, detail="Invalid amount")
 
     if sender_user.balance < amount:
-        raise HTTPException(
-            status_code=400,
-            detail="Insufficient balance"
-        )
+        raise HTTPException(status_code=400, detail="Insufficient balance")
 
     try:
         sender_user.balance -= amount
@@ -276,18 +254,17 @@ def transfer(
 
         return {"message": "Transfer successful"}
 
-    except Exception:
+    except:
         db.rollback()
-
-        raise HTTPException(
-            status_code=500,
-            detail="Transaction failed"
-        )
+        raise HTTPException(status_code=500, detail="Transaction failed")
 
 
 # ---------------- TRANSACTIONS ----------------
 
-@app.get("/transactions")
+@app.get(
+    "/transactions",
+    response_model=list[TransactionResponse]
+)
 def get_transactions(
     current_user: str = Depends(get_current_user),
     db: Session = Depends(get_db)
