@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, Float, ForeignKey
 from database import Base
-from datetime import datetime
+from datetime import datetime, timezone
 
 class User(Base):
     __tablename__ = "users"
@@ -21,5 +21,5 @@ class Transaction(Base):
 
     timestamp = Column(
         String,
-        default=lambda: datetime.utcnow().isoformat()
+        default=lambda: datetime.now(timezone.utc).isoformat()
     )

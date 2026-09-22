@@ -139,3 +139,118 @@ def test_authenticated_transactions(authenticated_client):
 
     assert response.status_code == 200
     assert isinstance(response.json(), list)
+
+def test_new_user_has_zero_balance(authenticated_client):
+    client = authenticated_client["client"]
+
+    response = client.get("/balance")
+
+    assert response.status_code == 200
+    assert response.json()["balance"] == 0
+
+def test_deposit_creates_transaction(authenticated_client):
+    client = authenticated_client["client"]
+
+    # Deposit money
+    deposit_response = client.post(
+        "/deposit",
+        params={
+            "amount": 100
+        }
+    )
+
+    assert deposit_response.status_code == 200
+
+    # Get transaction history
+    transactions_response = client.get("/transactions")
+
+    assert transactions_response.status_code == 200
+
+    transactions = transactions_response.json()
+
+    # A transaction should exist
+    assert len(transactions) >= 1
+
+    # Verify transaction amount
+    assert transactions[-1]["amount"] == 100
+
+def test_invalid_deposit_rejected(authenticated_client):
+    client = authenticated_client["client"]
+
+    # Try to deposit zero
+    response = client.post(
+        "/deposit",
+        params={
+            "amount": 0
+        }
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Invalid amount"
+
+def test_negative_deposit_rejected(authenticated_client):
+    client = authenticated_client["client"]
+
+    response = client.post(
+        "/deposit",
+        params={
+            "amount": -50
+        }
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Invalid amount"
+
+def test_invalid_deposit_does_not_change_balance(authenticated_client):
+    client = authenticated_client["client"]
+
+    # Get initial balance
+    initial_response = client.get("/balance")
+
+    assert initial_response.status_code == 200
+
+    initial_balance = initial_response.json()["balance"]
+
+    # Attempt invalid deposit
+    deposit_response = client.post(
+        "/deposit",
+        params={
+            "amount": -100
+        }
+    )
+
+    assert deposit_response.status_code == 400
+
+    # Check balance again
+    final_response = client.get("/balance")
+
+    assert final_response.status_code == 200
+
+    final_balance = final_response.json()["balance"]
+
+    assert final_balance == initial_balance
+
+def test_multiple_deposits_accumulate(authenticated_client):
+    client = authenticated_client["client"]
+
+    first_deposit = client.post(
+        "/deposit",
+        params={"amount": 100}
+    )
+
+    assert first_deposit.status_code == 200
+    assert first_deposit.json()["balance"] == 100
+
+    second_deposit = client.post(
+        "/deposit",
+        params={"amount": 50}
+    )
+
+    assert second_deposit.status_code == 200
+    assert second_deposit.json()["balance"] == 150
+
+    # Verify persisted balance
+    balance_response = client.get("/balance")
+
+    assert balance_response.status_code == 200
+    assert balance_response.json()["balance"] == 150

@@ -23,7 +23,7 @@ class TransferResponse(BaseModel):
 
 class TransactionResponse(BaseModel):
     id: int
-    sender_id: int
+    sender_id: int | None
     receiver_id: int
     amount: float
     timestamp: str
@@ -211,10 +211,22 @@ def deposit(
             detail="User not found"
         )
 
+    # Update balance
     user.balance += amount
+
+    # Create transaction record
+    transaction = Transaction(
+        sender_id=None,
+        receiver_id=user.id,
+        amount=amount
+    )
+
+    db.add(transaction)
     db.commit()
 
-    return {"balance": user.balance}
+    return {
+        "balance": user.balance
+    }
 
 # ---------------- TRANSFER ----------------
 
