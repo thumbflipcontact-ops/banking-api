@@ -254,3 +254,540 @@ def test_multiple_deposits_accumulate(authenticated_client):
 
     assert balance_response.status_code == 200
     assert balance_response.json()["balance"] == 150
+
+def test_successful_transfer(authenticated_client):
+    client = authenticated_client["client"]
+    sender_token = authenticated_client["token"]
+    receiver_username = f"receiver_{uuid.uuid4().hex[:8]}"
+    receiver_password = "TestPassword123!"
+
+    # Register receiver
+    register_response = client.post(
+        "/register",
+        params={
+            "username": receiver_username,
+            "password": receiver_password
+        }
+    )
+
+    assert register_response.status_code in [200, 201]
+
+    # Deposit money into sender account
+    deposit_response = client.post(
+        "/deposit",
+        params={
+            "amount": 100
+        },
+        headers={
+            "Authorization": f"Bearer {sender_token}"
+        }
+    )
+
+    assert deposit_response.status_code == 200
+    assert deposit_response.json()["balance"] == 100
+
+    # Transfer money to receiver
+    transfer_response = client.post(
+        "/transfer",
+        params={
+            "receiver": receiver_username,
+            "amount": 40
+        },
+        headers={
+            "Authorization": f"Bearer {sender_token}"
+        }
+    )
+
+    assert transfer_response.status_code == 200
+    assert transfer_response.json()["message"] == "Transfer successful"
+
+    # Login as receiver
+    receiver_login = client.post(
+        "/login",
+        data={
+            "username": receiver_username,
+            "password": receiver_password
+        }
+    )
+
+    assert receiver_login.status_code == 200
+
+    receiver_token = receiver_login.json()["access_token"]
+
+    # Check sender balance
+    sender_balance = client.get(
+        "/balance",
+        headers={
+            "Authorization": f"Bearer {sender_token}"
+        }
+    )
+
+    assert sender_balance.status_code == 200
+    assert sender_balance.json()["balance"] == 60
+
+    # Check receiver balance
+    receiver_balance = client.get(
+        "/balance",
+        headers={
+            "Authorization": f"Bearer {receiver_token}"
+        }
+    )
+
+    assert receiver_balance.status_code == 200
+    assert receiver_balance.json()["balance"] == 40
+
+def test_transfer_insufficient_balance(authenticated_client):
+    client = authenticated_client["client"]
+    sender_token = authenticated_client["token"]
+
+    receiver_username = f"receiver_{uuid.uuid4().hex[:8]}"
+    receiver_password = "TestPassword123!"
+
+    # Register receiver
+    register_response = client.post(
+        "/register",
+        params={
+            "username": receiver_username,
+            "password": receiver_password
+        }
+    )
+
+    assert register_response.status_code in [200, 201]
+
+    # Sender has only $50
+    deposit_response = client.post(
+        "/deposit",
+        params={
+            "amount": 50
+        },
+        headers={
+            "Authorization": f"Bearer {sender_token}"
+        }
+    )
+
+    assert deposit_response.status_code == 200
+    assert deposit_response.json()["balance"] == 50
+
+    # Try to transfer $100
+    transfer_response = client.post(
+        "/transfer",
+        params={
+            "receiver": receiver_username,
+            "amount": 100
+        },
+        headers={
+            "Authorization": f"Bearer {sender_token}"
+        }
+    )
+
+    assert transfer_response.status_code == 400
+    assert transfer_response.json()["detail"] == "Insufficient balance"
+
+    # Verify sender balance did not change
+    balance_response = client.get(
+        "/balance",
+        headers={
+            "Authorization": f"Bearer {sender_token}"
+        }
+    )
+
+    assert balance_response.status_code == 200
+    assert balance_response.json()["balance"] == 50
+
+def test_transfer_to_self_rejected(authenticated_client):
+    client = authenticated_client["client"]
+    username = authenticated_client["username"]
+    token = authenticated_client["token"]
+
+    # Deposit money first
+    deposit_response = client.post(
+        "/deposit",
+        params={
+            "amount": 100
+        },
+        headers={
+            "Authorization": f"Bearer {token}"
+        }
+    )
+
+    assert deposit_response.status_code == 200
+
+    # Try to transfer to yourself
+    transfer_response = client.post(
+        "/transfer",
+        params={
+            "receiver": username,
+            "amount": 50
+        },
+        headers={
+            "Authorization": f"Bearer {token}"
+        }
+    )
+
+    assert transfer_response.status_code == 400
+    assert transfer_response.json()["detail"] == "Cannot send to yourself"
+
+    # Verify balance did not change
+    balance_response = client.get(
+        "/balance",
+        headers={
+            "Authorization": f"Bearer {token}"
+        }
+    )
+
+    assert balance_response.status_code == 200
+    assert balance_response.json()["balance"] == 100
+
+def test_invalid_transfer_amount_rejected(authenticated_client):
+    client = authenticated_client["client"]
+    token = authenticated_client["token"]
+
+    receiver_username = f"receiver_{uuid.uuid4().hex[:8]}"
+
+    # Register receiver
+    register_response = client.post(
+        "/register",
+        params={
+            "username": receiver_username,
+            "password": "TestPassword123!"
+        }
+    )
+
+    assert register_response.status_code in [200, 201]
+
+    # Deposit money into sender account
+    deposit_response = client.post(
+        "/deposit",
+        params={
+            "amount": 100
+        },
+        headers={
+            "Authorization": f"Bearer {token}"
+        }
+    )
+
+    assert deposit_response.status_code == 200
+
+    # Try to transfer zero
+    transfer_response = client.post(
+        "/transfer",
+        params={
+            "receiver": receiver_username,
+            "amount": 0
+        },
+        headers={
+            "Authorization": f"Bearer {token}"
+        }
+    )
+
+    assert transfer_response.status_code == 400
+    assert transfer_response.json()["detail"] == "Invalid amount"
+
+    # Verify sender balance is unchanged
+    balance_response = client.get(
+        "/balance",
+        headers={
+            "Authorization": f"Bearer {token}"
+        }
+    )
+
+    assert balance_response.status_code == 200
+    assert balance_response.json()["balance"] == 100
+
+def test_negative_transfer_amount_rejected(authenticated_client):
+    client = authenticated_client["client"]
+    token = authenticated_client["token"]
+
+    receiver_username = f"receiver_{uuid.uuid4().hex[:8]}"
+
+    # Register receiver
+    register_response = client.post(
+        "/register",
+        params={
+            "username": receiver_username,
+            "password": "TestPassword123!"
+        }
+    )
+
+    assert register_response.status_code in [200, 201]
+
+    # Deposit money into sender account
+    deposit_response = client.post(
+        "/deposit",
+        params={
+            "amount": 100
+        },
+        headers={
+            "Authorization": f"Bearer {token}"
+        }
+    )
+
+    assert deposit_response.status_code == 200
+
+    # Try to transfer a negative amount
+    transfer_response = client.post(
+        "/transfer",
+        params={
+            "receiver": receiver_username,
+            "amount": -50
+        },
+        headers={
+            "Authorization": f"Bearer {token}"
+        }
+    )
+
+    assert transfer_response.status_code == 400
+    assert transfer_response.json()["detail"] == "Invalid amount"
+
+    # Verify sender balance is unchanged
+    balance_response = client.get(
+        "/balance",
+        headers={
+            "Authorization": f"Bearer {token}"
+        }
+    )
+
+    assert balance_response.status_code == 200
+    assert balance_response.json()["balance"] == 100
+
+def test_transfer_to_nonexistent_receiver_rejected(authenticated_client):
+    client = authenticated_client["client"]
+    token = authenticated_client["token"]
+
+    # Give sender some money
+    deposit_response = client.post(
+        "/deposit",
+        params={
+            "amount": 100
+        },
+        headers={
+            "Authorization": f"Bearer {token}"
+        }
+    )
+
+    assert deposit_response.status_code == 200
+    assert deposit_response.json()["balance"] == 100
+
+    # Try to transfer to a user that doesn't exist
+    transfer_response = client.post(
+        "/transfer",
+        params={
+            "receiver": f"does_not_exist_{uuid.uuid4().hex[:8]}",
+            "amount": 50
+        },
+        headers={
+            "Authorization": f"Bearer {token}"
+        }
+    )
+
+    assert transfer_response.status_code == 404
+    assert transfer_response.json()["detail"] == "Receiver not found"
+
+    # Verify sender balance is unchanged
+    balance_response = client.get(
+        "/balance",
+        headers={
+            "Authorization": f"Bearer {token}"
+        }
+    )
+
+    assert balance_response.status_code == 200
+    assert balance_response.json()["balance"] == 100
+
+def test_transaction_includes_usernames(authenticated_client):
+    client = authenticated_client["client"]
+    username = authenticated_client["username"]
+    token = authenticated_client["token"]
+
+    headers = {
+        "Authorization": f"Bearer {token}"
+    }
+
+    # Create a deposit
+    deposit_response = client.post(
+        "/deposit?amount=100",
+        headers=headers
+    )
+    assert deposit_response.status_code == 200
+
+    # Retrieve transaction history
+    response = client.get(
+        "/transactions",
+        headers=headers
+    )
+
+    assert response.status_code == 200
+
+    transactions = response.json()
+
+    # Find the deposit transaction
+    deposit = next(
+        txn for txn in transactions
+        if txn["amount"] == 100.0
+        and txn["sender_id"] is None
+    )
+
+    assert deposit["sender_username"] is None
+    assert deposit["receiver_username"] == username
+
+def test_transfer_includes_usernames(authenticated_client):
+    client = authenticated_client["client"]
+    username = authenticated_client["username"]
+    token = authenticated_client["token"]
+
+    headers = {
+        "Authorization": f"Bearer {token}"
+    }
+
+    # Create a unique receiver account
+    import uuid
+    receiver_username = f"receiver_{uuid.uuid4().hex[:8]}"
+
+    register_response = client.post(
+    "/register",
+    params={
+        "username": receiver_username,
+        "password": "ReceiverPass123!"
+    }
+)
+    assert register_response.status_code == 200
+
+    # Deposit funds into the sender's account
+    deposit_response = client.post(
+        "/deposit?amount=200",
+        headers=headers
+    )
+    assert deposit_response.status_code == 200
+
+    # Transfer funds to the receiver
+    transfer_response = client.post(
+        f"/transfer?receiver={receiver_username}&amount=50",
+        headers=headers
+    )
+    assert transfer_response.status_code == 200
+
+    # Retrieve the sender's transaction history
+    response = client.get(
+        "/transactions",
+        headers=headers
+    )
+    assert response.status_code == 200
+
+    transactions = response.json()
+
+    transfer = next(
+        txn for txn in transactions
+        if txn["sender_username"] == username
+        and txn["receiver_username"] == receiver_username
+        and txn["amount"] == 50.0
+    )
+
+    assert transfer["sender_id"] is not None
+    assert transfer["receiver_id"] is not None
+
+def test_transactions_filter_deposits(authenticated_client):
+    client = authenticated_client["client"]
+    token = authenticated_client["token"]
+
+    headers = {
+        "Authorization": f"Bearer {token}"
+    }
+
+    # Create a deposit
+    deposit_response = client.post(
+        "/deposit?amount=50",
+        headers=headers
+    )
+    assert deposit_response.status_code == 200
+
+    # Retrieve only deposits
+    response = client.get(
+        "/transactions?transaction_type=deposit",
+        headers=headers
+    )
+
+    assert response.status_code == 200
+    transactions = response.json()
+
+    assert len(transactions) >= 1
+    assert all(
+        txn["sender_id"] is None
+        for txn in transactions
+    )
+
+def test_transactions_filter_transfers(authenticated_client):
+    import uuid
+
+    client = authenticated_client["client"]
+    username = authenticated_client["username"]
+    token = authenticated_client["token"]
+
+    headers = {
+        "Authorization": f"Bearer {token}"
+    }
+
+    # Fund the sender
+    deposit_response = client.post(
+        "/deposit?amount=100",
+        headers=headers
+    )
+    assert deposit_response.status_code == 200
+
+    # Create a receiver
+    receiver_username = f"receiver_{uuid.uuid4().hex[:8]}"
+
+    register_response = client.post(
+        "/register",
+        params={
+            "username": receiver_username,
+            "password": "ReceiverPass123!"
+        }
+    )
+    assert register_response.status_code == 200
+
+    # Transfer funds
+    transfer_response = client.post(
+        "/transfer",
+        params={
+            "receiver": receiver_username,
+            "amount": 25
+        },
+        headers=headers
+    )
+    assert transfer_response.status_code == 200
+
+    # Retrieve only transfers
+    response = client.get(
+        "/transactions?transaction_type=transfer",
+        headers=headers
+    )
+
+    assert response.status_code == 200
+    transactions = response.json()
+
+    assert len(transactions) >= 1
+    assert all(
+        txn["sender_id"] is not None
+        for txn in transactions
+    )
+    assert any(
+        txn["sender_id"] is not None
+        and txn["receiver_id"] is not None
+        for txn in transactions
+    )
+
+def test_transactions_invalid_type(authenticated_client):
+    client = authenticated_client["client"]
+    token = authenticated_client["token"]
+
+    headers = {
+        "Authorization": f"Bearer {token}"
+    }
+
+    response = client.get(
+        "/transactions?transaction_type=withdrawal",
+        headers=headers
+    )
+
+    assert response.status_code == 422
+

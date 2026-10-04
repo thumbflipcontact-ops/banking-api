@@ -1,7 +1,8 @@
-from fastapi import FastAPI, HTTPException, Depends
-from sqlalchemy.orm import Session
+from fastapi import FastAPI, Depends, HTTPException, Query
+from typing import Literal
+from sqlalchemy.orm import Session, joinedload
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from database import SessionLocal
+from database import SessionLocal, engine, Base
 from models import User, Transaction
 from passlib.context import CryptContext
 from jose import jwt, JWTError
@@ -10,6 +11,9 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 import os
 from pydantic import ConfigDict
+
+# Create database tables
+Base.metadata.create_all(bind=engine)
 
 class BalanceResponse(BaseModel):
     username: str
@@ -25,6 +29,8 @@ class TransactionResponse(BaseModel):
     id: int
     sender_id: int | None
     receiver_id: int
+    sender_username: str | None
+    receiver_username: str
     amount: float
     timestamp: str
 
@@ -236,27 +242,85 @@ def transfer(
     amount: float,
     current_user: str = Depends(get_current_user),
     db: Session = Depends(get_db)
-):    
+):
+    sender_user = db.query(User).filter(
+        User.username == current_user
+    ).first()
 
-    sender_user = db.query(User).filter(User.username == current_user).first()
-    receiver_user = db.query(User).filter(User.username == receiver).first()
+    receiver_user = db.query(User).filter(
+        User.username == receiver
+    ).first()
+
+    if not sender_user:
+        raise HTTPException(
+            status_code=404,
+            detail="Sender not found"
+        )
 
     if not receiver_user:
-        raise HTTPException(status_code=404, detail="Receiver not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Receiver not found"
+        )
 
     if current_user == receiver:
-        raise HTTPException(status_code=400, detail="Cannot send to yourself")
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot send to yourself"
+        )
 
     if amount <= 0:
-        raise HTTPException(status_code=400, detail="Invalid amount")
-
-    if sender_user.balance < amount:
-        raise HTTPException(status_code=400, detail="Insufficient balance")
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid amount"
+        )
 
     try:
+        # Lock both users in a consistent ID order.
+        # This reduces the risk of deadlocks when
+        # transfers happen in opposite directions.
+
+        if sender_user.id < receiver_user.id:
+            first_user_id = sender_user.id
+            second_user_id = receiver_user.id
+        else:
+            first_user_id = receiver_user.id
+            second_user_id = sender_user.id
+
+        first_user = (
+            db.query(User)
+            .filter(User.id == first_user_id)
+            .with_for_update()
+            .one()
+        )
+
+        second_user = (
+            db.query(User)
+            .filter(User.id == second_user_id)
+            .with_for_update()
+            .one()
+        )
+
+        # Re-identify sender and receiver after acquiring locks.
+        if first_user.id == sender_user.id:
+            sender_user = first_user
+            receiver_user = second_user
+        else:
+            receiver_user = first_user
+            sender_user = second_user
+
+        # Check the current balance AFTER acquiring the lock.
+        if sender_user.balance < amount:
+            raise HTTPException(
+                status_code=400,
+                detail="Insufficient balance"
+            )
+
+        # Update balances
         sender_user.balance -= amount
         receiver_user.balance += amount
 
+        # Create transaction record
         txn = Transaction(
             sender_id=sender_user.id,
             receiver_id=receiver_user.id,
@@ -266,12 +330,20 @@ def transfer(
         db.add(txn)
         db.commit()
 
-        return {"message": "Transfer successful"}
+        return {
+            "message": "Transfer successful"
+        }
 
-    except:
+    except HTTPException:
         db.rollback()
-        raise HTTPException(status_code=500, detail="Transaction failed")
+        raise
 
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Transaction failed"
+        )
 
 # ---------------- TRANSACTIONS ----------------
 
@@ -280,6 +352,11 @@ def transfer(
     response_model=list[TransactionResponse]
 )
 def get_transactions(
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    transaction_type: Literal["deposit", "transfer"] | None = Query(
+        default=None
+    ),
     current_user: str = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -293,9 +370,47 @@ def get_transactions(
             detail="User not found"
         )
 
-    txns = db.query(Transaction).filter(
-        (Transaction.sender_id == user.id) |
-        (Transaction.receiver_id == user.id)
-    ).all()
+    query = (
+        db.query(Transaction)
+        .options(
+            joinedload(Transaction.sender),
+            joinedload(Transaction.receiver)
+        )
+        .filter(
+            (Transaction.sender_id == user.id) |
+            (Transaction.receiver_id == user.id)
+        )
+    )
 
-    return txns
+    # Filter by transaction type
+    if transaction_type == "deposit":
+        query = query.filter(
+            Transaction.sender_id.is_(None)
+        )
+    elif transaction_type == "transfer":
+        query = query.filter(
+            Transaction.sender_id.isnot(None)
+        )
+
+    txns = (
+        query
+        .order_by(Transaction.id.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+    return [
+        {
+            "id": txn.id,
+            "sender_id": txn.sender_id,
+            "receiver_id": txn.receiver_id,
+            "sender_username": (
+                txn.sender.username if txn.sender else None
+            ),
+            "receiver_username": txn.receiver.username,
+            "amount": txn.amount,
+            "timestamp": txn.timestamp
+        }
+        for txn in txns
+    ]
