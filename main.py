@@ -11,6 +11,14 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 import os
 from pydantic import ConfigDict
+from services.transfer_service import (
+    transfer_money,
+    SenderNotFoundError,
+    ReceiverNotFoundError,
+    SelfTransferError,
+    InvalidTransferAmountError,
+    InsufficientFundsError
+)
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
@@ -235,7 +243,6 @@ def deposit(
     }
 
 # ---------------- TRANSFER ----------------
-
 @app.post("/transfer", response_model=TransferResponse)
 def transfer(
     receiver: str,
@@ -243,106 +250,42 @@ def transfer(
     current_user: str = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    sender_user = db.query(User).filter(
-        User.username == current_user
-    ).first()
-
-    receiver_user = db.query(User).filter(
-        User.username == receiver
-    ).first()
-
-    if not sender_user:
-        raise HTTPException(
-            status_code=404,
-            detail="Sender not found"
-        )
-
-    if not receiver_user:
-        raise HTTPException(
-            status_code=404,
-            detail="Receiver not found"
-        )
-
-    if current_user == receiver:
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot send to yourself"
-        )
-
-    if amount <= 0:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid amount"
-        )
-
     try:
-        # Lock both users in a consistent ID order.
-        # This reduces the risk of deadlocks when
-        # transfers happen in opposite directions.
-
-        if sender_user.id < receiver_user.id:
-            first_user_id = sender_user.id
-            second_user_id = receiver_user.id
-        else:
-            first_user_id = receiver_user.id
-            second_user_id = sender_user.id
-
-        first_user = (
-            db.query(User)
-            .filter(User.id == first_user_id)
-            .with_for_update()
-            .one()
+        return transfer_money(
+            receiver=receiver,
+            amount=amount,
+            current_user=current_user,
+            db=db
         )
 
-        second_user = (
-            db.query(User)
-            .filter(User.id == second_user_id)
-            .with_for_update()
-            .one()
-        )
-
-        # Re-identify sender and receiver after acquiring locks.
-        if first_user.id == sender_user.id:
-            sender_user = first_user
-            receiver_user = second_user
-        else:
-            receiver_user = first_user
-            sender_user = second_user
-
-        # Check the current balance AFTER acquiring the lock.
-        if sender_user.balance < amount:
-            raise HTTPException(
-                status_code=400,
-                detail="Insufficient balance"
-            )
-
-        # Update balances
-        sender_user.balance -= amount
-        receiver_user.balance += amount
-
-        # Create transaction record
-        txn = Transaction(
-            sender_id=sender_user.id,
-            receiver_id=receiver_user.id,
-            amount=amount
-        )
-
-        db.add(txn)
-        db.commit()
-
-        return {
-            "message": "Transfer successful"
-        }
-
-    except HTTPException:
-        db.rollback()
-        raise
-
-    except Exception:
-        db.rollback()
+    except SenderNotFoundError as error:
         raise HTTPException(
-            status_code=500,
-            detail="Transaction failed"
+            status_code=404,
+            detail=str(error)
+        )
+
+    except ReceiverNotFoundError as error:
+        raise HTTPException(
+            status_code=404,
+            detail=str(error)
+        )
+
+    except SelfTransferError as error:
+        raise HTTPException(
+            status_code=400,
+            detail=str(error)
+        )
+
+    except InvalidTransferAmountError as error:
+        raise HTTPException(
+            status_code=400,
+            detail=str(error)
+        )
+
+    except InsufficientFundsError as error:
+        raise HTTPException(
+            status_code=400,
+            detail=str(error)
         )
 
 # ---------------- TRANSACTIONS ----------------
