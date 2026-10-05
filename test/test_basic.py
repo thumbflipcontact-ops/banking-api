@@ -123,7 +123,7 @@ def test_authenticated_deposit(authenticated_client):
 
     response = client.post(
         "/deposit",
-        params={
+        json={
             "amount": 100
         }
     )
@@ -154,7 +154,7 @@ def test_deposit_creates_transaction(authenticated_client):
     # Deposit money
     deposit_response = client.post(
         "/deposit",
-        params={
+        json={
             "amount": 100
         }
     )
@@ -180,26 +180,26 @@ def test_invalid_deposit_rejected(authenticated_client):
     # Try to deposit zero
     response = client.post(
         "/deposit",
-        params={
+        json={
             "amount": 0
         }
     )
 
-    assert response.status_code == 400
-    assert response.json()["detail"] == "Invalid amount"
+    assert response.status_code == 422
+    assert response.json()["detail"][0]["type"] == "greater_than"
 
 def test_negative_deposit_rejected(authenticated_client):
     client = authenticated_client["client"]
 
     response = client.post(
         "/deposit",
-        params={
+        json={
             "amount": -50
         }
     )
 
-    assert response.status_code == 400
-    assert response.json()["detail"] == "Invalid amount"
+    assert response.status_code == 422
+    assert response.json()["detail"][0]["type"] == "greater_than"
 
 def test_invalid_deposit_does_not_change_balance(authenticated_client):
     client = authenticated_client["client"]
@@ -214,12 +214,12 @@ def test_invalid_deposit_does_not_change_balance(authenticated_client):
     # Attempt invalid deposit
     deposit_response = client.post(
         "/deposit",
-        params={
+        json={
             "amount": -100
         }
     )
 
-    assert deposit_response.status_code == 400
+    assert deposit_response.status_code == 422
 
     # Check balance again
     final_response = client.get("/balance")
@@ -235,7 +235,7 @@ def test_multiple_deposits_accumulate(authenticated_client):
 
     first_deposit = client.post(
         "/deposit",
-        params={"amount": 100}
+        json={"amount": 100}
     )
 
     assert first_deposit.status_code == 200
@@ -243,7 +243,7 @@ def test_multiple_deposits_accumulate(authenticated_client):
 
     second_deposit = client.post(
         "/deposit",
-        params={"amount": 50}
+        json={"amount": 50}
     )
 
     assert second_deposit.status_code == 200
@@ -275,7 +275,7 @@ def test_successful_transfer(authenticated_client):
     # Deposit money into sender account
     deposit_response = client.post(
         "/deposit",
-        params={
+        json={
             "amount": 100
         },
         headers={
@@ -357,7 +357,7 @@ def test_transfer_insufficient_balance(authenticated_client):
     # Sender has only $50
     deposit_response = client.post(
         "/deposit",
-        params={
+        json={
             "amount": 50
         },
         headers={
@@ -402,7 +402,7 @@ def test_transfer_to_self_rejected(authenticated_client):
     # Deposit money first
     deposit_response = client.post(
         "/deposit",
-        params={
+        json={
             "amount": 100
         },
         headers={
@@ -458,7 +458,7 @@ def test_invalid_transfer_amount_rejected(authenticated_client):
     # Deposit money into sender account
     deposit_response = client.post(
         "/deposit",
-        params={
+        json={
             "amount": 100
         },
         headers={
@@ -514,7 +514,7 @@ def test_negative_transfer_amount_rejected(authenticated_client):
     # Deposit money into sender account
     deposit_response = client.post(
         "/deposit",
-        params={
+        json={
             "amount": 100
         },
         headers={
@@ -557,7 +557,7 @@ def test_transfer_to_nonexistent_receiver_rejected(authenticated_client):
     # Give sender some money
     deposit_response = client.post(
         "/deposit",
-        params={
+        json={
             "amount": 100
         },
         headers={
@@ -605,9 +605,12 @@ def test_transaction_includes_usernames(authenticated_client):
 
     # Create a deposit
     deposit_response = client.post(
-        "/deposit?amount=100",
-        headers=headers
-    )
+    "/deposit",
+    json={
+        "amount": 100
+    },
+    headers=headers
+)
     assert deposit_response.status_code == 200
 
     # Retrieve transaction history
@@ -654,9 +657,12 @@ def test_transfer_includes_usernames(authenticated_client):
 
     # Deposit funds into the sender's account
     deposit_response = client.post(
-        "/deposit?amount=200",
-        headers=headers
-    )
+    "/deposit",
+    json={
+        "amount": 200
+    },
+    headers=headers
+)
     assert deposit_response.status_code == 200
 
     # Transfer funds to the receiver
@@ -695,9 +701,12 @@ def test_transactions_filter_deposits(authenticated_client):
 
     # Create a deposit
     deposit_response = client.post(
-        "/deposit?amount=50",
-        headers=headers
-    )
+    "/deposit",
+    json={
+        "amount": 50
+    },
+    headers=headers
+)
     assert deposit_response.status_code == 200
 
     # Retrieve only deposits
@@ -728,9 +737,12 @@ def test_transactions_filter_transfers(authenticated_client):
 
     # Fund the sender
     deposit_response = client.post(
-        "/deposit?amount=100",
-        headers=headers
-    )
+    "/deposit",
+    json={
+        "amount": 100
+    },
+    headers=headers
+)
     assert deposit_response.status_code == 200
 
     # Create a receiver

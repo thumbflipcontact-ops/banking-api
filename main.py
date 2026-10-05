@@ -4,13 +4,20 @@ from sqlalchemy.orm import Session, joinedload
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from database import SessionLocal, engine, Base
 from models import User, Transaction
-from passlib.context import CryptContext
 from jose import jwt, JWTError
-from datetime import datetime, timedelta, timezone
-from pydantic import BaseModel
-from dotenv import load_dotenv
-import os
-from pydantic import ConfigDict
+from config import (
+    SECRET_KEY,
+    JWT_ALGORITHM
+)
+from schemas import (
+    BalanceResponse,
+    DepositRequest,
+    DepositResponse,
+    TransferRequest,
+    TransferResponse,
+    TransactionResponse
+)
+
 from services.transfer_service import (
     transfer_money,
     SenderNotFoundError,
@@ -20,44 +27,39 @@ from services.transfer_service import (
     InsufficientFundsError
 )
 
+from services.deposit_service import (
+    deposit_money,
+    DepositUserNotFoundError,
+    InvalidDepositAmountError
+)
+
+from services.transaction_service import (
+    get_user_transactions,
+    TransactionUserNotFoundError
+)
+
+from services.balance_service import (
+    get_user_balance,
+    BalanceUserNotFoundError
+)
+
+from services.auth_service import (
+    register_user,
+    login_user,
+    UserAlreadyExistsError,
+    InvalidCredentialsError
+)
+
+from config import (
+    SECRET_KEY,
+    JWT_ALGORITHM
+)
+
 # Create database tables
 Base.metadata.create_all(bind=engine)
 
-class BalanceResponse(BaseModel):
-    username: str
-    balance: float
-
-class DepositResponse(BaseModel):
-    balance: float
-
-class TransferResponse(BaseModel):
-    message: str
-
-class TransactionResponse(BaseModel):
-    id: int
-    sender_id: int | None
-    receiver_id: int
-    sender_username: str | None
-    receiver_username: str
-    amount: float
-    timestamp: str
-
-    model_config = ConfigDict(from_attributes=True)
-    
 app = FastAPI()
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-# 🔐 JWT CONFIG
-
-load_dotenv()
-
-SECRET_KEY = os.getenv("SECRET_KEY")
-
-if not SECRET_KEY:
-    raise RuntimeError("SECRET_KEY is not configured")
-
-ALGORITHM = "HS256"
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
@@ -74,32 +76,9 @@ def get_db():
 
 # ---------------- PASSWORD FUNCTIONS ----------------
 
-def hash_password(password: str):
-    return pwd_context.hash(password)
-
-
-def verify_password(plain, hashed):
-    return pwd_context.verify(plain, hashed)
 
 
 # ---------------- JWT FUNCTIONS ----------------
-
-def create_token(data: dict):
-    to_encode = data.copy()
-
-    expire = datetime.now(timezone.utc) + timedelta(minutes=30)
-
-    to_encode.update({
-        "exp": expire
-    })
-
-    return jwt.encode(
-        to_encode,
-        SECRET_KEY,
-        algorithm=ALGORITHM
-    )
-
-
 def get_current_user(
     token: str = Depends(oauth2_scheme)
 ):
@@ -107,7 +86,7 @@ def get_current_user(
         payload = jwt.decode(
             token,
             SECRET_KEY,
-            algorithms=[ALGORITHM]
+            algorithms=[JWT_ALGORITHM]
         )
 
         username = payload.get("sub")
@@ -127,59 +106,43 @@ def get_current_user(
         )
 
 # ---------------- AUTH ----------------
-
 @app.post("/register")
 def register(
     username: str,
     password: str,
     db: Session = Depends(get_db)
 ):
-    existing = db.query(User).filter(
-        User.username == username
-    ).first()
-
-    if existing:
-        raise HTTPException(
-            status_code=400,
-            detail="User already exists"
+    try:
+        return register_user(
+            username=username,
+            password=password,
+            db=db
         )
 
-    user = User(
-        username=username,
-        password=hash_password(password)
-    )
+    except UserAlreadyExistsError as error:
+        raise HTTPException(
+            status_code=400,
+            detail=str(error)
+        )
 
-    db.add(user)
-    db.commit()
-
-    return {"message": "User registered"}
 
 @app.post("/login")
 def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db)
 ):
-    user = db.query(User).filter(
-        User.username == form_data.username
-    ).first()
-
-    if not user or not verify_password(
-        form_data.password,
-        user.password
-    ):
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid credentials"
+    try:
+        return login_user(
+            username=form_data.username,
+            password=form_data.password,
+            db=db
         )
 
-    token = create_token({
-        "sub": form_data.username
-    })
-
-    return {
-        "access_token": token,
-        "token_type": "bearer"
-    }
+    except InvalidCredentialsError as error:
+        raise HTTPException(
+            status_code=401,
+            detail=str(error)
+        )
 
 # ---------------- BALANCE ----------------
 
@@ -188,61 +151,45 @@ def check_balance(
     current_user: str = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    user = db.query(User).filter(
-        User.username == current_user
-    ).first()
-
-    if not user:
-        raise HTTPException(
-            status_code=404,
-            detail="User not found"
+    try:
+        return get_user_balance(
+            current_user=current_user,
+            db=db
         )
 
-    return {
-        "username": user.username,
-        "balance": user.balance
-    }
+    except BalanceUserNotFoundError as error:
+        raise HTTPException(
+            status_code=404,
+            detail=str(error)
+        )
 
 @app.post("/deposit", response_model=DepositResponse)
 def deposit(
-    amount: float,
+    request: DepositRequest,
     current_user: str = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    if amount <= 0:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid amount"
+    try:
+        return deposit_money(
+            amount=request.amount,
+            current_user=current_user,
+            db=db
         )
 
-    user = db.query(User).filter(
-        User.username == current_user
-    ).first()
-
-    if not user:
+    except DepositUserNotFoundError as error:
         raise HTTPException(
             status_code=404,
-            detail="User not found"
+            detail=str(error)
         )
 
-    # Update balance
-    user.balance += amount
-
-    # Create transaction record
-    transaction = Transaction(
-        sender_id=None,
-        receiver_id=user.id,
-        amount=amount
-    )
-
-    db.add(transaction)
-    db.commit()
-
-    return {
-        "balance": user.balance
-    }
+    except InvalidDepositAmountError as error:
+        raise HTTPException(
+            status_code=400,
+            detail=str(error)
+        )
 
 # ---------------- TRANSFER ----------------
+
 @app.post("/transfer", response_model=TransferResponse)
 def transfer(
     receiver: str,
@@ -288,6 +235,7 @@ def transfer(
             detail=str(error)
         )
 
+
 # ---------------- TRANSACTIONS ----------------
 
 @app.get(
@@ -303,57 +251,17 @@ def get_transactions(
     current_user: str = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    user = db.query(User).filter(
-        User.username == current_user
-    ).first()
+    try:
+        return get_user_transactions(
+            current_user=current_user,
+            limit=limit,
+            offset=offset,
+            transaction_type=transaction_type,
+            db=db
+        )
 
-    if not user:
+    except TransactionUserNotFoundError as error:
         raise HTTPException(
             status_code=404,
-            detail="User not found"
+            detail=str(error)
         )
-
-    query = (
-        db.query(Transaction)
-        .options(
-            joinedload(Transaction.sender),
-            joinedload(Transaction.receiver)
-        )
-        .filter(
-            (Transaction.sender_id == user.id) |
-            (Transaction.receiver_id == user.id)
-        )
-    )
-
-    # Filter by transaction type
-    if transaction_type == "deposit":
-        query = query.filter(
-            Transaction.sender_id.is_(None)
-        )
-    elif transaction_type == "transfer":
-        query = query.filter(
-            Transaction.sender_id.isnot(None)
-        )
-
-    txns = (
-        query
-        .order_by(Transaction.id.desc())
-        .offset(offset)
-        .limit(limit)
-        .all()
-    )
-
-    return [
-        {
-            "id": txn.id,
-            "sender_id": txn.sender_id,
-            "receiver_id": txn.receiver_id,
-            "sender_username": (
-                txn.sender.username if txn.sender else None
-            ),
-            "receiver_username": txn.receiver.username,
-            "amount": txn.amount,
-            "timestamp": txn.timestamp
-        }
-        for txn in txns
-    ]
