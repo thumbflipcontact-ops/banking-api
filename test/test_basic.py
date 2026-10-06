@@ -289,7 +289,7 @@ def test_successful_transfer(authenticated_client):
     # Transfer money to receiver
     transfer_response = client.post(
         "/transfer",
-        params={
+        json={
             "receiver": receiver_username,
             "amount": 40
         },
@@ -371,7 +371,7 @@ def test_transfer_insufficient_balance(authenticated_client):
     # Try to transfer $100
     transfer_response = client.post(
         "/transfer",
-        params={
+        json={
             "receiver": receiver_username,
             "amount": 100
         },
@@ -415,7 +415,7 @@ def test_transfer_to_self_rejected(authenticated_client):
     # Try to transfer to yourself
     transfer_response = client.post(
         "/transfer",
-        params={
+        json={
             "receiver": username,
             "amount": 50
         },
@@ -471,7 +471,7 @@ def test_invalid_transfer_amount_rejected(authenticated_client):
     # Try to transfer zero
     transfer_response = client.post(
         "/transfer",
-        params={
+        json={
             "receiver": receiver_username,
             "amount": 0
         },
@@ -480,8 +480,8 @@ def test_invalid_transfer_amount_rejected(authenticated_client):
         }
     )
 
-    assert transfer_response.status_code == 400
-    assert transfer_response.json()["detail"] == "Invalid amount"
+    assert transfer_response.status_code == 422
+    assert transfer_response.json()["detail"][0]["type"] == "greater_than"
 
     # Verify sender balance is unchanged
     balance_response = client.get(
@@ -527,7 +527,7 @@ def test_negative_transfer_amount_rejected(authenticated_client):
     # Try to transfer a negative amount
     transfer_response = client.post(
         "/transfer",
-        params={
+        json={
             "receiver": receiver_username,
             "amount": -50
         },
@@ -536,8 +536,8 @@ def test_negative_transfer_amount_rejected(authenticated_client):
         }
     )
 
-    assert transfer_response.status_code == 400
-    assert transfer_response.json()["detail"] == "Invalid amount"
+    assert transfer_response.status_code == 422
+    assert transfer_response.json()["detail"][0]["type"] == "greater_than"
 
     # Verify sender balance is unchanged
     balance_response = client.get(
@@ -571,7 +571,7 @@ def test_transfer_to_nonexistent_receiver_rejected(authenticated_client):
     # Try to transfer to a user that doesn't exist
     transfer_response = client.post(
         "/transfer",
-        params={
+        json={
             "receiver": f"does_not_exist_{uuid.uuid4().hex[:8]}",
             "amount": 50
         },
@@ -667,9 +667,13 @@ def test_transfer_includes_usernames(authenticated_client):
 
     # Transfer funds to the receiver
     transfer_response = client.post(
-        f"/transfer?receiver={receiver_username}&amount=50",
-        headers=headers
-    )
+    "/transfer",
+    json={
+        "receiver": receiver_username,
+        "amount": 50
+    },
+    headers=headers
+)
     assert transfer_response.status_code == 200
 
     # Retrieve the sender's transaction history
@@ -760,7 +764,7 @@ def test_transactions_filter_transfers(authenticated_client):
     # Transfer funds
     transfer_response = client.post(
         "/transfer",
-        params={
+        json={
             "receiver": receiver_username,
             "amount": 25
         },
