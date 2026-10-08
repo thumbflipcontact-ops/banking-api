@@ -1,0 +1,14 @@
+.git
+.gitignore
+.env
+__pycache__
+.pytest_cache
+.venv
+venv
+.vs
+*.pyc
+*.pyo
+*.pyd
+pytest.ini
+test
+bank.db

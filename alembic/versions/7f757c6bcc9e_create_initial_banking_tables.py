@@ -8,6 +8,8 @@ Create Date: 2026-10-05 14:01:10.259566
 
 from typing import Sequence, Union
 
+import sqlalchemy as sa
+
 from alembic import op
 
 
@@ -19,10 +21,83 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Mark the existing database schema as the initial baseline."""
-    pass
+    """Create the initial banking database schema."""
+
+    op.create_table(
+        "users",
+        sa.Column(
+            "id",
+            sa.Integer(),
+            primary_key=True
+        ),
+        sa.Column(
+            "username",
+            sa.String(),
+            nullable=True
+        ),
+        sa.Column(
+            "password",
+            sa.String(),
+            nullable=True
+        ),
+        sa.Column(
+            "balance",
+            sa.Float(),
+            nullable=True
+        ),
+        sa.UniqueConstraint(
+            "username",
+            name="uq_users_username"
+        )
+    )
+
+    op.create_index(
+        "ix_users_username",
+        "users",
+        ["username"],
+        unique=False
+    )
+
+    op.create_table(
+        "transactions",
+        sa.Column(
+            "id",
+            sa.Integer(),
+            primary_key=True
+        ),
+        sa.Column(
+            "sender_id",
+            sa.Integer(),
+            sa.ForeignKey("users.id"),
+            nullable=True
+        ),
+        sa.Column(
+            "receiver_id",
+            sa.Integer(),
+            sa.ForeignKey("users.id"),
+            nullable=False
+        ),
+        sa.Column(
+            "amount",
+            sa.Float(),
+            nullable=False
+        ),
+        sa.Column(
+            "timestamp",
+            sa.String(),
+            nullable=True
+        )
+    )
 
 
 def downgrade() -> None:
-    """No schema changes to reverse for the initial baseline."""
-    pass
+    """Drop the initial banking database schema."""
+
+    op.drop_table("transactions")
+
+    op.drop_index(
+        "ix_users_username",
+        table_name="users"
+    )
+
+    op.drop_table("users")
